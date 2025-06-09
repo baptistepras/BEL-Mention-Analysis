@@ -1,3 +1,3 @@
 	rbes	genbioel	biosyn	arboel	Weighted Avg	Legend
-1	0.56	0.51	0.76	0.48	0.5775	<-- zero-shot entity
-0	0.6	0.56	0.98	0.75	0.7225	<-- seen in train
+1	0.56	0.5	0.76	0.48	0.5179458062761364	<-- zero-shot entity
+0	0.6	0.56	0.98	0.75	0.6406194481968153	<-- seen in train

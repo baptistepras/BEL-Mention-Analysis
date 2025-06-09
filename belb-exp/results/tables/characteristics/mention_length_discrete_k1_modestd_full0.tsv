@@ -1,3 +1,3 @@
 	rbes	genbioel	biosyn	arboel	Weighted Avg	Legend
-1	0.4	0.47	0.75	0.43	0.5125	<-- long mention (T > 10)
-0	0.59	0.55	0.91	0.69	0.685	<-- short mention (T <= 10)
+1	0.4	0.47	0.75	0.43	0.43534072900158477	<-- long mention (T > 10)
+0	0.59	0.55	0.91	0.69	0.6139732415962882	<-- short mention (T <= 10)

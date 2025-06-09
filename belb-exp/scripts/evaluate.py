@@ -788,11 +788,11 @@ def main():
 
             # Add "Weighted Avg" column
             weighted_avgs = []
-
+            
             for idx, row in char_df.iterrows():
                 total_mentions = 0
                 weighted_sum = 0
-
+            
                 for model in row.index:
                     if model == "Legend":
                         continue
@@ -800,18 +800,28 @@ def main():
                     if pd.isna(value):
                         continue
                     
-                    # number of mentions is len(char_to_mentions[idx])
-                    num_mentions = len(char_to_mentions[idx])
+                    # Count how many mentions this model actually produced for this bin
+                    model_mentions = [
+                        (corpus, h)
+                        for (corpus, h) in char_to_mentions[idx]
+                        if h in preds[model].get(corpus, {})
+                    ]
+            
+                    num_mentions = len(model_mentions)
+            
+                    if num_mentions == 0:
+                        continue  # Do not contribute to weighted sum / total_mentions
+                    
                     total_mentions += num_mentions
                     weighted_sum += value * num_mentions
-
+            
                 if total_mentions == 0:
                     avg = float('nan')
                 else:
                     avg = weighted_sum / total_mentions
-
+            
                 weighted_avgs.append(avg)
-
+        
             # Insert column between last model and Legend
             model_columns = [col for col in char_df.columns if col != "Legend"]
             insertion_index = len(model_columns)
