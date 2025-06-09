@@ -1,0 +1,3 @@
+	rbes	genbioel	biosyn	arboel	Weighted Avg	Legend
+1	0.56	0.54	0.91	0.68	0.6725000000000001	<-- few synonyms (<= 20)
+0	0.73	0.56		0.75	0.6799999999999999	<-- many synonyms (> 20)

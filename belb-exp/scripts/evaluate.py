@@ -9,10 +9,14 @@ import os
 import random
 
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
+import numpy as np
+
 from belb import (ENTITY_TO_CORPORA_NAMES, ENTITY_TO_KB_NAME, AutoBelbCorpus,
                   AutoBelbKb, BelbKb, Entities, Splits)
-from belb.resources import Corpora
-from belb.utils import load_stratified, load_zeroshot
+from belb.resources import Corpora  # type: ignore
+from belb.utils import load_stratified, load_zeroshot  # type: ignore
 
 from benchmark.model import CORPORA_MULTI_ENTITY_TYPES, NIL
 from benchmark.utils import load_json
@@ -23,10 +27,10 @@ EVAL_MODES = ["std", "strict", "lenient"]
 CORPORA = [
     # (Corpora.GNORMPLUS.name, Entities.GENE),
     # (Corpora.NLM_GENE.name, Entities.GENE),
-    (Corpora.NCBI_DISEASE.name, Entities.DISEASE),
+    # (Corpora.NCBI_DISEASE.name, Entities.DISEASE),
     # (Corpora.BC5CDR.name, Entities.DISEASE),  # ZIP corrompu
     # (Corpora.BC5CDR.name, Entities.CHEMICAL),  # ZIP corrompu
-    (Corpora.NLM_CHEM.name, Entities.CHEMICAL),
+    # (Corpora.NLM_CHEM.name, Entities.CHEMICAL),
     (Corpora.LINNAEUS.name, Entities.SPECIES),
     (Corpora.S800.name, Entities.SPECIES),
     # (Corpora.BIOID.name, Entities.CELL_LINE), # TAR corrompu
@@ -62,6 +66,15 @@ CORPUS_TO_RBES = {
 
 RBES_JOINT = ["gnormplus", "taggerone", "tmvar", "sr4gn"]
 
+BINNING_CONFIG = {
+    "mention_length": None,
+    "num_synonyms": None,
+    "num_homonyms": 20,
+    "lexical_variation": 20,
+    "mention_frequency": None,
+    "entity_frequency": None
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate results")
@@ -88,6 +101,16 @@ def parse_args():
         "--full",
         action="store_true",
         help="Do not include joint ner-nen models in comparison (full test set)",
+    )
+    parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help="If set, will give advanced metrics"
+    )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="If set, plot continuous characteristics"
     )
     return parser.parse_args()
 
@@ -215,7 +238,7 @@ def get_results_by_corpus(
                     gold=corpus_gold, pred=corpus_pred, mode=mode, k=k
                 )
             except KeyError as e:
-                print(f"⚠️ Warning: Missing key {e} in predictions for corpus '{corpus}' and model '{model}'")
+                print(f"[WARN] Missing key {e} in predictions for corpus '{corpus}' and model '{model}'")
                 continue
 
 
@@ -257,7 +280,7 @@ def get_results_by_entity(
                     gold=entity_gold, pred=entity_pred, mode=mode, k=k
                 )
             except KeyError as e:
-                print(f"⚠️ Warning: Missing key {e} in model {model} for entity {entity}")
+                print(f"[WARN] Missing key {e} in model {model} for entity {entity}")
                 continue
 
     return pd.DataFrame(data)
@@ -316,13 +339,313 @@ def get_results_by_subset(
                     data[entity_type][model] = multi_label_recall(
                         gold=subset_gold, pred=subset_pred, mode=mode, k=k
                     )
-                except:
-                    print(f"⚠️ Warning: Missing key {e} in subset {subset_name} for model {model} and entity {entity_type}")
+                except KeyError as e:
+                    print(f"[WARN] Missing key {e} in subset {subset_name} for model {model} and entity {entity_type}")
                     continue    
 
         out[subset_name] = pd.DataFrame(data)
 
     return out
+
+
+def get_results_by_characteristic(
+    gold: dict,
+    preds: dict,
+    characteristic_name: str,
+    mode: str = "std",
+    k: int = 1
+) -> pd.DataFrame:
+    data: dict = {}
+
+    for model, corpora_pred in preds.items():
+        # We want to accumulate all mentions across all corpora (global evaluation)
+        char_to_mentions = {}
+
+        for corpus, corpus_gold in gold.items():
+            corpus_pred = corpora_pred.get(corpus, {})
+
+            if len(corpus_pred) == 0:
+                continue
+
+            # Recover the correct directory name for this model on this corpus
+            if model == "rbes":
+                model_dir = CORPUS_TO_RBES.get(corpus.split("_")[0], None)
+                if model_dir is None:
+                    print(f"[ERROR] No RBES mapping found for corpus {corpus}")
+                    continue
+            else:
+                model_dir = model
+
+            # Path to the corresponding annotated_filtered_predictions.json
+            annotated_path = os.path.join(
+                os.getcwd(),
+                "results",
+                corpus,
+                model_dir,
+                "annotated_filtered_predictions.json"
+            )
+
+            if not os.path.exists(annotated_path):
+                print(f"[WARN] No annotated predictions found for {model} on {corpus}")
+                continue
+
+            annotated_preds = load_json(annotated_path)
+
+            # Group mention IDs by the value of the characteristic (global across corpora)
+            for p in annotated_preds:
+                h = p["hexdigest"]
+                if h not in corpus_gold:
+                    continue  # Ignore mentions that are not in gold
+
+                if characteristic_name not in p:
+                    continue
+
+                char_value = p[characteristic_name]
+
+                if char_value not in char_to_mentions:
+                    char_to_mentions[char_value] = set()
+
+                char_to_mentions[char_value].add((corpus, h))  # Store both corpus + mention ID
+
+        # Now compute global recall for each characteristic value
+        for char_value, mentions in char_to_mentions.items():
+            subset_gold = {}
+            subset_pred = {}
+
+            for corpus, h in mentions:
+                corpus_gold = gold[corpus]
+                corpus_pred = corpora_pred.get(corpus, {})
+
+                if h in corpus_gold:
+                    subset_gold[h] = corpus_gold[h]
+                if h in corpus_pred:
+                    subset_pred[h] = corpus_pred[h]
+
+            if len(subset_gold) == 0:
+                continue
+
+            if char_value not in data:
+                data[char_value] = {}
+
+            try:
+                data[char_value][model] = multi_label_recall(
+                    gold=subset_gold,
+                    pred=subset_pred,
+                    mode=mode,
+                    k=k
+                )
+            except Exception as e:
+                print(f"[ERROR] Error on characteristic {char_value}, model {model}: {e}")
+                continue
+
+    # Return a DataFrame with characteristic values as rows
+    return pd.DataFrame(data).T, char_to_mentions
+
+
+def save_characteristic_table(char_df, char_name, args):
+    # Create output dir
+    output_dir = os.path.join(os.getcwd(), "results", "tables", "characteristics")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save as TSV
+    tsv_path = os.path.join(
+        output_dir,
+        f"{char_name}_k{args.k}_mode{args.mode}_full{int(args.full)}.tsv"
+    )
+    char_df.to_csv(tsv_path, sep="\t")
+
+    # Clean print
+    print(char_df.to_markdown(tablefmt="github", floatfmt=".2f"))
+
+
+def plot_performance_by_continuous_characteristic_simple(
+    gold: dict,
+    preds: dict,
+    characteristic_name: str,
+    mode: str = "std",
+    k: int = 1,
+    save_csv: bool = True
+):
+    print(f"\n==== PLOTTING CHARACTERISTIC (SIMPLE): {characteristic_name} ====")
+
+    # Init dict : valeur -> (score_total, nb_fois)
+    dict_of_characteristic = {}
+
+    # Loop over models
+    for model, corpora_pred in preds.items():
+        # Loop over corpora
+        for corpus, corpus_gold in gold.items():
+            corpus_pred = corpora_pred.get(corpus, {})
+
+            if len(corpus_pred) == 0:
+                continue
+
+            # Recover model dir
+            if model == "rbes":
+                model_dir = CORPUS_TO_RBES.get(corpus.split("_")[0], None)
+                if model_dir is None:
+                    print(f"[ERROR] No RBES mapping found for corpus {corpus}")
+                    continue
+            else:
+                model_dir = model
+
+            # Load annotated predictions
+            annotated_path = os.path.join(
+                os.getcwd(),
+                "results",
+                corpus,
+                model_dir,
+                "annotated_filtered_predictions.json"
+            )
+
+            if not os.path.exists(annotated_path):
+                print(f"[WARN] No annotated predictions found for {model} on {corpus}")
+                continue
+
+            annotated_preds = load_json(annotated_path)
+
+            # Loop over mentions
+            for p in annotated_preds:
+                h = p["hexdigest"]
+                if h not in corpus_gold:
+                    continue
+
+                if characteristic_name not in p:
+                    continue
+
+                try:
+                    value = float(p[characteristic_name])
+                    if np.isnan(value):
+                        continue  # skip nan values
+                except (ValueError, TypeError):
+                    continue  # skip bad values
+
+                y_true = set(int(y) for y in corpus_gold[h])
+                y_pred_topk = [list(set(pred_h)) for pred_h in corpus_pred.get(h, [])][:k]
+
+                correct = 0
+                if mode in ["std", "strict"]:
+                    y_pred = []
+                    for pred_set in y_pred_topk:
+                        if mode == "strict":
+                            y_pred.append(NIL if len(pred_set) > 1 else pred_set[0])
+                        else:
+                            y_pred.append(random.sample(pred_set, 1)[0])
+                    for y in y_pred:
+                        y = -1 if y == NIL else int(y)
+                        if y in y_true:
+                            correct = 1
+                            break
+                else:
+                    for pred_set in y_pred_topk:
+                        pred_set = [-1 if y == NIL else int(y) for y in pred_set]
+                        if any(y in y_true for y in pred_set):
+                            correct = 1
+                            break
+
+                # Update dict
+                if value not in dict_of_characteristic:
+                    dict_of_characteristic[value] = (0, 0)  # (score_total, nb_fois)
+
+                prev_score, prev_count = dict_of_characteristic[value]
+                dict_of_characteristic[value] = (prev_score + correct, prev_count + 1)
+
+    # If empty
+    if len(dict_of_characteristic) == 0:
+        print(f"[WARN] No data collected for characteristic: {characteristic_name}")
+        return
+
+    # Build x/y lists
+    x = sorted(dict_of_characteristic.keys())
+    y = []
+    counts = []
+
+    for val in x:
+        score_total, nb_fois = dict_of_characteristic[val]
+        mean_perf = float(score_total) / float(nb_fois)
+        y.append(mean_perf)
+        counts.append(nb_fois)
+
+    x = np.array([float(val) for val in x], dtype=np.float64)
+    y = np.array([float(val) for val in y], dtype=np.float64)
+
+    # bins when too much points
+    n_bins = BINNING_CONFIG.get(characteristic_name, None)
+    if n_bins is not None:
+        print(f"[INFO] Applying binning: {n_bins} bins for {characteristic_name}")
+
+        bins = np.linspace(x.min(), x.max(), n_bins + 1)
+        bin_indices = np.digitize(x, bins)
+
+        x_binned = []
+        y_binned = []
+        for i in range(1, n_bins + 1):
+            mask = (bin_indices == i)
+            if mask.sum() == 0:
+                continue
+            x_binned.append(x[mask].mean())
+            y_binned.append(y[mask].mean())
+
+        # Remplacer x et y par les versions binned
+        x = np.array(x_binned)
+        y = np.array(y_binned)
+
+    else:
+        print(f"[INFO] No binning applied for {characteristic_name}")
+
+    # Plot
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode='lines+markers',
+        name=characteristic_name
+    ))
+
+    fig.update_layout(
+        title=f"Performance vs {characteristic_name}",
+        xaxis_title=characteristic_name,
+        yaxis_title="Mean Recall (k=1)",
+        template='plotly_white'
+    )
+
+    # Trend line 
+    degree = 2
+    coeffs = np.polyfit(x, y, degree)
+    poly_eq = np.poly1d(coeffs)
+    y_poly_pred = poly_eq(x)
+
+    fig.add_trace(go.Scatter(
+        x=x, y=y_poly_pred,
+        mode='lines',
+        name='Trend',
+        line=dict(color='red', width=2)
+    ))
+
+    # Save
+    save_dir = os.path.join(os.getcwd(), "metrics", "plots")
+    os.makedirs(save_dir, exist_ok=True)
+    plot_path = os.path.join(save_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.png")
+
+    pio.write_image(fig, plot_path, format='png', scale=2)
+    print(f"[DONE] Plot Saved: {plot_path}")
+
+    # Optionally save CSV
+    if save_csv:
+        csv_dir = os.path.join(os.getcwd(), "metrics", "plots/tables")
+        os.makedirs(csv_dir, exist_ok=True) 
+
+        csv_path = os.path.join(csv_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.csv")    
+
+        with open(csv_path, "w") as f:
+            f.write("value,mean_perf\n")
+            for val_i in range(len(x)):
+                val = x[val_i]
+                mean_perf = y[val_i]
+                f.write(f"{val},{mean_perf:.4f}\n") 
+
+        print(f"[DONE] CSV Saved: {csv_path}")
 
 
 def main():
@@ -349,7 +672,7 @@ def main():
                 db_config=DB_CONFIG,
             )
         except Exception as e:
-            print(f"[WARNING] Skipping {corpus_name} due to error: {e}")
+            print(f"[WARN] Skipping {corpus_name} due to error: {e}")
             continue
 
         corpus_dir = os.path.join(results_dir, full_corpus_name)
@@ -395,7 +718,131 @@ def main():
     entity_df = entity_df.drop(columns=[c for c in entity_df.columns if c.endswith("_ar")], errors="ignore")
     print(entity_df)
     print("\n")
-    
+
+    if args.advanced:
+        print("CHARACTERISTICS:")
+        characteristics_to_compute = [
+            "zero_shot_entity",
+            "zero_shot_surface_form",
+            "mention_length_discrete",
+            "synonymy_difficulty",
+            "homonymy_difficulty",
+            "lexical_variation_discrete",
+            "mention_frequency_difficulty",
+            "entity_frequency_difficulty"
+        ]
+
+        # Legend to explain each characteristic value
+        CHARACTERISTIC_LEGENDS = {
+            "zero_shot_entity": {
+                1: "<-- zero-shot entity",
+                0: "<-- seen in train"
+            },
+            "zero_shot_surface_form": {
+                1: "<-- zero-shot surface form",
+                0: "<-- seen in train"
+            },
+            "mention_length_discrete": {
+                1: "<-- long mention (T > 10)",
+                0: "<-- short mention (T <= 10)"
+            },
+            "synonymy_difficulty": {
+                1: "<-- few synonyms (<= 10)",
+                0: "<-- many synonyms (> 10)"
+            },
+            "homonymy_difficulty": {
+                1: "<-- homonyms exist",
+                0: "<-- no homonyms"
+            },
+            "lexical_variation_discrete": {
+                1: "<-- high variation (> 0.1)",
+                0: "<-- low variation (<= 0.1)"
+            },
+            "mention_frequency_difficulty": {
+                1: "<-- rare mention (<= 10)",
+                0: "<-- frequent mention (> 10)"
+            },
+            "entity_frequency_difficulty": {
+                1: "<-- rare entity (<= 10)",
+                0: "<-- frequent entity (> 10)"
+            }
+        }
+
+        for char_name in characteristics_to_compute:
+            print(f"\n==== {char_name.upper()} ====")
+            char_df, char_to_mentions = get_results_by_characteristic(
+                gold=gold,
+                preds=preds,
+                characteristic_name=char_name,
+                mode=args.mode,
+                k=args.k
+            )
+
+            # Reorder so that 1 is on top, 0 is below
+            if 1 in char_df.index and 0 in char_df.index:
+                char_df = char_df.loc[[1, 0]]
+
+            # Add legend column
+            legend = CHARACTERISTIC_LEGENDS.get(char_name, {})
+            char_df["Legend"] = [legend.get(i, "") for i in char_df.index]
+
+            # Add "Weighted Avg" column
+            weighted_avgs = []
+
+            for idx, row in char_df.iterrows():
+                total_mentions = 0
+                weighted_sum = 0
+
+                for model in row.index:
+                    if model == "Legend":
+                        continue
+                    value = row[model]
+                    if pd.isna(value):
+                        continue
+                    
+                    # number of mentions is len(char_to_mentions[idx])
+                    num_mentions = len(char_to_mentions[idx])
+                    total_mentions += num_mentions
+                    weighted_sum += value * num_mentions
+
+                if total_mentions == 0:
+                    avg = float('nan')
+                else:
+                    avg = weighted_sum / total_mentions
+
+                weighted_avgs.append(avg)
+
+            # Insert column between last model and Legend
+            model_columns = [col for col in char_df.columns if col != "Legend"]
+            insertion_index = len(model_columns)
+
+            char_df.insert(insertion_index, "Weighted Avg", weighted_avgs)
+
+            # Print nicely + save
+            save_characteristic_table(char_df, char_name, args)
+
+    if args.plot:
+        print("\n==== PLOTTING CONTINUOUS CHARACTERISTICS ====")
+
+        continuous_characteristics = [
+            "mention_length",
+            "num_synonyms",
+            "num_homonyms",
+            "lexical_variation",
+            "mention_frequency",
+            "entity_frequency"
+        ]
+
+        for char_name in continuous_characteristics:
+            plot_performance_by_continuous_characteristic_simple(
+                gold=gold,
+                preds=preds,
+                characteristic_name=char_name,
+                mode=args.mode,
+                k=args.k
+        )
+            
+    """
     print("SUBSETS")
     subsets_results = get_results_by_subset(
          gold=gold, preds=preds, mode=args.mode, k=args.k
@@ -431,8 +878,8 @@ def main():
     #             f"{result}_k{args.k}_mode{int(args.mode)}_full{int(args.full)}.tsv",
     #         ),
     #     )
+    """
     
-
 
 if __name__ == "__main__":
     main()

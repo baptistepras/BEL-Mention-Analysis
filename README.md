@@ -117,8 +117,10 @@ or
 
 ### Running the benchmark
 
-Edit the ENABLED_CORPORA list in `belb-exp/scripts/evaluate.p` to specify 
+Edit the CORPORA list in `belb-exp/scripts/evaluate.p` to specify 
 which corpora to include in evaluation.
+
+Edit the 
 
 <br>
 
@@ -133,6 +135,19 @@ The argument `k` can take any integer value.
 The argument `mode` can take the values `std`, `strict` or `lenient`.
 
 You can also add the argument `--full`.
+
+<br>
+
+Compute advanced metrics on predictions by first running from `belb-exp`:
+
+`python3 metrics/annotate_preds.py --corpora <corpora_name>`
+
+Add the argument `--force` to force the recomputation of the metrics,
+otherwise the script will try to pick them up from saved files.
+
+Then run the evaluation script with the argument `--advanced`.
+
+Add the argument `--plot` to plot the metrics in `metrics/plots/`
 
 
 ### Working corpora
