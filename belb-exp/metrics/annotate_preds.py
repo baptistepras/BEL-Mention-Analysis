@@ -15,7 +15,6 @@ from joblib import Parallel, delayed  # type: ignore
 from typing import List, Dict, Any, Tuple
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import Levenshtein
 from transformers import AutoTokenizer
 from pathlib import Path
@@ -25,7 +24,7 @@ import sqlite3
 NORMALIZED_LEVENSHTEIN_THRESHOLD = 0.1
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
-args = None
+args=None
 
 
 # Utils
@@ -297,11 +296,11 @@ def build_homonymy_lookup(kb_path: Path, kb_table_name: str, metrics_dir: Path, 
     # Parallel comparison
     print("[INFO] Comparing surface forms for homonymy (test CUIs only)... (parallelized with joblib)")
     num_workers = os.cpu_count()
-    print(f"[INFO] Using {num_workers} CPU cores")
+    print(f"[INFO] Using {num_workers} CPU cores") 
 
     results = Parallel(n_jobs=num_workers)(
         delayed(compute_homonyms_for_cui)(cui1, names1, cui_to_names)
-        for cui1, names1 in tqdm(cui_to_names.items(), desc="[tqdm] Processing CUIs for homonymy")
+        for cui1, names1 in tqdm(cui_to_names.items(), desc=f"[INFO] Processing CUIs for homonymy", file=sys.stdout)
     )
 
     # Collect results
@@ -390,8 +389,9 @@ def build_metrics_dict(preds: List[Dict],
                        homonymy_lookup: Dict[str, int],
                        kb_cui_to_names:Dict[str, List[str]],) -> Dict[str, Dict]:
     print()
-    print("[INFO] Building metrics dict...")
+    print("[INFO] Building metrics dict.")
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    global args
 
     metrics_dict = {}
     n_missing = 0
@@ -414,11 +414,11 @@ def build_metrics_dict(preds: List[Dict],
         # mention length
         tokens = tokenizer.tokenize(surface_form)
         mention_length = len(tokens)
-        mention_length_discrete = 1 if mention_length > 10 else 0
+        mention_length_discrete = 1 if mention_length > args.length else 0
 
         # synonymy
         num_synonyms = synonymy_lookup.get(gold_cui, 0)
-        synonymy_difficulty = 1 if num_synonyms <= 10 else 0
+        synonymy_difficulty = 1 if num_synonyms <= args.synonymy else 0
 
         # homonymy
         num_homonyms = homonymy_lookup.get(gold_cui, 0)
@@ -438,15 +438,15 @@ def build_metrics_dict(preds: List[Dict],
         else:
             lexical_variation = 1.0  # worst case -> no name found
 
-        lexical_variation_discrete = 1 if lexical_variation > 0.1 else 0
+        lexical_variation_discrete = 1 if lexical_variation > args.variation else 0
 
         # mention frequency
         mention_frequency = train_surface_form_counter.get(surface_form, 0)
-        mention_frequency_difficulty = 1 if mention_frequency <= 10 else 0
+        mention_frequency_difficulty = 1 if mention_frequency <= args.frequency else 0
 
         # entity frequency
         entity_frequency = train_cui_counter.get(gold_cui, 0)
-        entity_frequency_difficulty = 1 if entity_frequency <= 10 else 0
+        entity_frequency_difficulty = 1 if entity_frequency <= args.frequency else 0
 
         # Save to dict
         metrics_dict[mention_id] = {
@@ -479,6 +479,10 @@ def main():
     parser = argparse.ArgumentParser(description="Annotate BELB predictions with dataset characteristics.")
     parser.add_argument("--corpora", type=str, required=True, help="Corpora to annotate")
     parser.add_argument("--force", action="store_true", help="Force rebuild of the saved results")
+    parser.add_argument("--synonymy", type=int, default=10, help="Define the threshold to determine low synonymy")
+    parser.add_argument("--lenght", type=int, default=10, help="Define the threshold to determine long mentions")
+    parser.add_argument("--frequency", type=int, default=10, help="Define the threshold to determine low frequency (entities and mentions)")
+    parser.add_argument("--variation", type=float, default=0.1, help="Define the threshold to determine lexical variation")
     args = parser.parse_args()
 
     ### Corpus -> KB and model mappings
@@ -600,5 +604,6 @@ if __name__ == "__main__":
     # Example usage from belb-exp:
     # python3 metrics/annotate_preds.py --corpora medmentions --force
     # python3 metrics/annotate_preds.py --corpora linnaeus
+    # python3 metrics/annotate_preds.py --corpora s800 --synonymy 5 --variation 0.2
 
     main()

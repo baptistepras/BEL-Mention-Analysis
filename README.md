@@ -145,9 +145,32 @@ Compute advanced metrics on predictions by first running from `belb-exp`:
 Add the argument `--force` to force the recomputation of the metrics,
 otherwise the script will try to pick them up from saved files.
 
+You can change the threshold for most characteristics using the following args:
+
+`--synonymy <int>`: number of synonyms to be considered a poorly annotated entity (default <= 10)
+`--length <int>`: number of tokens to be considered a long mention (default > 10)
+`--variation <int>`: variation to be considered a high lexical variation (default > 0.1)
+`--frequency <int>`: frequency to be considered a rare entity or mention (default <= 10)
+
 Then run the evaluation script with the argument `--advanced`.
 
 Add the argument `--plot` to plot the metrics in `metrics/plots/`
+
+<br>
+
+Analyze your dataset characteristics by running from `belb-exp`:
+
+`python3 metrics/analyze_datasets.py --corpora <corpora_name>`
+
+Add the argument `--force` to force the recomputation of the metrics,
+otherwise the script will try to pick them up from saved files.
+
+You can change the threshold for most characteristics using the following args:
+
+`--synonymy <int>`: number of synonyms to be considered a poorly annotated entity (default <= 10)
+`--length <int>`: number of tokens to be considered a long mention (default > 10)
+`--variation <int>`: variation to be considered a high lexical variation (default > 0.1)
+`--frequency <int>`: frequency to be considered a rare entity or mention (default <= 10)
 
 
 ### Working corpora

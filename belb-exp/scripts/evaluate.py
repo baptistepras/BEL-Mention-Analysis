@@ -7,6 +7,8 @@ Get results from entity-specific rule-based systems
 import argparse
 import os
 import random
+import json
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -67,12 +69,12 @@ CORPUS_TO_RBES = {
 RBES_JOINT = ["gnormplus", "taggerone", "tmvar", "sr4gn"]
 
 BINNING_CONFIG = {
-    "mention_length": None,
-    "num_synonyms": None,
-    "num_homonyms": 20,
+    "mention_length": "auto",
+    "num_synonyms": "auto",
+    "num_homonyms": "auto",
     "lexical_variation": 20,
-    "mention_frequency": None,
-    "entity_frequency": None
+    "mention_frequency": 100,
+    "entity_frequency": 100
 }
 
 
@@ -466,8 +468,6 @@ def plot_performance_by_continuous_characteristic_simple(
     k: int = 1,
     save_csv: bool = True
 ):
-    print(f"\n==== PLOTTING CHARACTERISTIC (SIMPLE): {characteristic_name} ====")
-
     # Init dict : valeur -> (score_total, nb_fois)
     dict_of_characteristic = {}
 
@@ -568,9 +568,13 @@ def plot_performance_by_continuous_characteristic_simple(
 
     x = np.array([float(val) for val in x], dtype=np.float64)
     y = np.array([float(val) for val in y], dtype=np.float64)
+    save_x = x.copy()
+    save_y = y.copy()
 
-    # bins when too much points
+    # bins when too much points    
     n_bins = BINNING_CONFIG.get(characteristic_name, None)
+    if n_bins == "auto":
+        n_bins = len(x)
     if n_bins is not None:
         print(f"[INFO] Applying binning: {n_bins} bins for {characteristic_name}")
 
@@ -579,16 +583,18 @@ def plot_performance_by_continuous_characteristic_simple(
 
         x_binned = []
         y_binned = []
+        counts_binned = [] 
         for i in range(1, n_bins + 1):
             mask = (bin_indices == i)
             if mask.sum() == 0:
                 continue
             x_binned.append(x[mask].mean())
             y_binned.append(y[mask].mean())
+            counts_binned.append(sum(counts[j] for j in range(len(x)) if bin_indices[j] == i))
 
-        # Remplacer x et y par les versions binned
         x = np.array(x_binned)
         y = np.array(y_binned)
+        counts = np.array(counts_binned)
 
     else:
         print(f"[INFO] No binning applied for {characteristic_name}")
@@ -596,19 +602,15 @@ def plot_performance_by_continuous_characteristic_simple(
     # Plot
     fig = go.Figure()
 
+    # Performance vs characteristic
     fig.add_trace(go.Scatter(
         x=x,
         y=y,
         mode='lines+markers',
-        name=characteristic_name
+        name='Mean Recall (k=1)',
+        line=dict(color='blue', width=2),
+        yaxis='y1'
     ))
-
-    fig.update_layout(
-        title=f"Performance vs {characteristic_name}",
-        xaxis_title=characteristic_name,
-        yaxis_title="Mean Recall (k=1)",
-        template='plotly_white'
-    )
 
     # Trend line 
     degree = 2
@@ -617,11 +619,49 @@ def plot_performance_by_continuous_characteristic_simple(
     y_poly_pred = poly_eq(x)
 
     fig.add_trace(go.Scatter(
-        x=x, y=y_poly_pred,
+        x=x,
+        y=y_poly_pred,
         mode='lines',
-        name='Trend',
-        line=dict(color='red', width=2)
+        name='Trend (poly deg 2)',
+        line=dict(color='red', width=2, dash='dash'),
+        yaxis='y1'
     ))
+
+    # Number of examples per characteristic
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=counts,
+        mode='lines+markers',
+        name='Number of Mentions',
+        line=dict(color='grey', width=1),
+        opacity=0.5,
+        yaxis='y2'
+    ))
+
+    # Layout with secondary y-axis
+    fig.update_layout(
+        title=f"Performance vs {characteristic_name}",
+        xaxis_title=characteristic_name,
+        yaxis=dict(
+            title="Mean Recall (k=1)",
+            side='left',
+            showgrid=False
+        ),
+        yaxis2=dict(
+            title='Number of Mentions',
+            overlaying='y',
+            side='right',
+            showgrid=False
+        ),
+        legend=dict(
+            orientation="v",
+            x=1.02,
+            y=1,
+            bordercolor="Black",
+            borderwidth=0.5
+        ),
+        template='plotly_white'
+    )
 
     # Save
     save_dir = os.path.join(os.getcwd(), "metrics", "plots")
@@ -646,6 +686,209 @@ def plot_performance_by_continuous_characteristic_simple(
                 f.write(f"{val},{mean_perf:.4f}\n") 
 
         print(f"[DONE] CSV Saved: {csv_path}")
+
+    return save_x, save_y
+
+
+def aggregate_annotations():
+    print(f"[INFO] Aggregating all predictions from results/.")
+    results_dir = os.path.join(os.getcwd(), "results")
+    output_path = os.path.join("metrics", "tmp", "aggregated_annotations.json")
+    existing_path = Path("metrics/tmp/aggregated_annotations.json")
+
+    if existing_path.exists():
+        print(f"[INFO] Aggregated file already exists at {existing_path}. Skipping aggregation.")
+        return
+
+    all_annotations = []
+
+    for corpus in os.listdir(results_dir):
+        corpus_path = os.path.join(results_dir, corpus)
+        if not os.path.isdir(corpus_path):
+            continue
+
+        for model in os.listdir(corpus_path):
+            model_path = os.path.join(corpus_path, model)
+            if not os.path.isdir(model_path):
+                continue
+
+            json_path = os.path.join(model_path, "annotated_filtered_predictions.json")
+            if not os.path.exists(json_path):
+                continue
+
+            with open(json_path, "r") as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    print(f"[ERROR] JSON decode error in {json_path}")
+                    continue
+
+            for p in data:
+                p["corpus"] = corpus
+                p["model"] = model
+                all_annotations.append(p)
+
+    os.makedirs(os.path.join("metrics", "tmp"), exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(all_annotations, f, indent=2)
+
+    print(f"[DONE] Aggregated {len(all_annotations)} mentions from results/ -> {output_path}")
+
+
+def plot_focus_vs_others(x, y, focus_char, continuous_char_to_discrete_char, preds, save_path):
+    """
+    Plot recall for a given continuous characteristic, and show average value of discrete characteristics at each bin.
+    """
+    # Deduce the discrete version of the focus char to skip
+    discrete_focus_char = continuous_char_to_discrete_char[focus_char]
+
+    # Discrete characteristics to display (except the one mapped from focus_char)
+    discrete_chars = {c: {} for c in list(continuous_char_to_discrete_char.values()) if c != discrete_focus_char}
+
+    # Binning
+    n_bins = BINNING_CONFIG[focus_char]
+    if n_bins == "auto":
+        n_bins = len(x)
+    bins = np.linspace(x.min(), x.max(), n_bins + 1)
+    bin_indices = np.digitize(x, bins)
+
+    x_binned = []
+    y_binned = []
+    bin_to_mentions = {}
+    bin_idx_to_center_x = {}
+
+    for i in range(1, n_bins + 1):
+        mask = (bin_indices == i)
+        if mask.sum() == 0:
+            continue
+
+        x_center = x[mask].mean()
+        y_center = y[mask].mean()
+
+        x_binned.append(x_center)
+        y_binned.append(y_center)
+
+        bin_idx_to_center_x[i] = x_center
+
+        mentions = []
+        for p in preds:
+            if focus_char in p:
+                try:
+                    val = float(p[focus_char])
+                    if bins[i - 1] <= val < bins[i] or (i == n_bins and val == bins[-1]):
+                        mentions.append(p)
+                except:
+                    continue
+        bin_to_mentions[i] = mentions
+
+    x = np.array(x_binned)
+    y = np.array(y_binned)
+
+    # Mean value of each discrete char for each bin
+    for char in discrete_chars:
+        for i, mentions in bin_to_mentions.items():
+            vals = [float(p[char]) for p in mentions if char in p and isinstance(p[char], (int, float))]
+            mean_val = np.mean(vals) if vals else np.nan
+            x_val = bin_idx_to_center_x[i]
+            discrete_chars[char][x_val] = mean_val
+
+
+    # Plot
+    fig = go.Figure()
+
+    # Focus characteristic
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode='lines+markers',
+        name='Mean Recall (k=1)',
+        line=dict(color='blue', width=2),
+        yaxis='y1'
+    ))
+
+    # Discrete characteristics
+    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'red']
+    for i, (char, values_dict) in enumerate(discrete_chars.items()):
+        x_vals = list(values_dict.keys())
+        y_vals = list(values_dict.values())
+
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode='lines+markers',
+            name=char,
+            line=dict(color=colors[i % len(colors)], width=1),
+            opacity=0.4,
+            yaxis='y2'
+        ))
+
+    fig.update_layout(
+        title=f"Performance vs {focus_char} (with discrete characteristics)",
+        xaxis=dict(title=focus_char),
+        yaxis=dict(title='Recall (k=1)', side='left'),
+        yaxis2=dict(
+            title='Mean Discrete Char Value',
+            side='right',
+            overlaying='y',
+            range=[0, 1]
+        ),
+        template="plotly_white",
+        legend=dict(
+            orientation="h",
+            x=0,
+            y=-0.3,
+            xanchor="left",
+            yanchor="top",
+            bordercolor="Black",
+            borderwidth=0.5
+        )
+    )
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    fig.write_image(save_path)
+    print(f"[DONE] Focus plot saved -> {save_path}")
+
+
+def plot_characteristics_correlation_matrix():
+    """
+    Compute and plot Spearman correlation matrix between continuous and discrete characteristics
+    from the aggregated annotated predictions.
+    """
+    # Load enriched annotations
+    with open("metrics/tmp/aggregated_annotations.json", "r") as f:
+        data = json.load(f)
+
+    # List of continuous and discrete characteristics to analyze
+    selected_columns = [
+        "mention_length", "num_synonyms", "num_homonyms",
+        "lexical_variation", "mention_frequency", "entity_frequency",
+        "mention_length_discrete", "synonymy_difficulty", "homonymy_difficulty",
+        "lexical_variation_discrete", "mention_frequency_difficulty", "entity_frequency_difficulty",
+        "zero_shot_entity", "zero_shot_surface_name"
+    ]
+
+    # Build DataFrame with only selected columns
+    df = pd.DataFrame([{k: p.get(k, None) for k in selected_columns} for p in data])
+
+    # Convert all values to numeric (ignore errors silently)
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Drop incomplete rows
+    df = df.dropna()
+
+    # If after cleaning there's nothing left, alert
+    if df.empty:
+        print("[ERROR] No data available after cleaning. Correlation matrix not computed.")
+        return
+
+    # Compute Spearman correlation
+    corr_matrix = df.corr(method="spearman")
+
+    # Save to CSV
+    output_path = "metrics/plots/characteristics_correlation_matrix.csv"
+    corr_matrix.to_csv(output_path)
+    print(f"[DONE] Correlation matrix saved to {output_path}")
 
 
 def main():
@@ -719,9 +962,7 @@ def main():
     print(entity_df)
     print("\n")
 
-    if args.advanced:
-        print("CHARACTERISTICS:")
-        characteristics_to_compute = [
+    characteristics_to_compute = [
             "zero_shot_entity",
             "zero_shot_surface_form",
             "mention_length_discrete",
@@ -731,6 +972,9 @@ def main():
             "mention_frequency_difficulty",
             "entity_frequency_difficulty"
         ]
+
+    if args.advanced:
+        print("CHARACTERISTICS:")
 
         # Legend to explain each characteristic value
         CHARACTERISTIC_LEGENDS = {
@@ -788,11 +1032,11 @@ def main():
 
             # Add "Weighted Avg" column
             weighted_avgs = []
-            
+
             for idx, row in char_df.iterrows():
                 total_mentions = 0
                 weighted_sum = 0
-            
+
                 for model in row.index:
                     if model == "Legend":
                         continue
@@ -806,20 +1050,20 @@ def main():
                         for (corpus, h) in char_to_mentions[idx]
                         if h in preds[model].get(corpus, {})
                     ]
-            
+
                     num_mentions = len(model_mentions)
-            
+
                     if num_mentions == 0:
                         continue  # Do not contribute to weighted sum / total_mentions
                     
                     total_mentions += num_mentions
                     weighted_sum += value * num_mentions
-            
+
                 if total_mentions == 0:
                     avg = float('nan')
                 else:
                     avg = weighted_sum / total_mentions
-            
+
                 weighted_avgs.append(avg)
         
             # Insert column between last model and Legend
@@ -833,6 +1077,8 @@ def main():
 
     if args.plot:
         print("\n==== PLOTTING CONTINUOUS CHARACTERISTICS ====")
+        aggregate_annotations()
+        print()
 
         continuous_characteristics = [
             "mention_length",
@@ -844,13 +1090,35 @@ def main():
         ]
 
         for char_name in continuous_characteristics:
-            plot_performance_by_continuous_characteristic_simple(
+            print(f"[INFO] Plotting continuous characteritics for {char_name}.")
+            x, y = plot_performance_by_continuous_characteristic_simple(
                 gold=gold,
                 preds=preds,
                 characteristic_name=char_name,
                 mode=args.mode,
                 k=args.k
-        )
+            )
+
+            print(f"[INFO] Plotting focus vs others for {char_name}.")
+            plot_focus_vs_others(
+                x=x, y=y,
+                focus_char=char_name,
+                continuous_char_to_discrete_char={
+                    "mention_length": "mention_length_discrete",
+                    "num_synonyms": "synonymy_difficulty",
+                    "num_homonyms": "homonymy_difficulty",
+                    "lexical_variation": "lexical_variation_discrete",
+                    "mention_frequency": "mention_frequency_difficulty",
+                    "entity_frequency": "entity_frequency_difficulty"
+                },
+                preds=load_json("metrics/tmp/aggregated_annotations.json"),
+                save_path=f"metrics/plots/focus_{char_name}_vs_others.png"
+                )
+            print()
+
+        # print(f"[INFO] Plotting correlation matrix.")
+        # plot_characteristics_correlation_matrix()
+        # print()
             
     """
     print("SUBSETS")
