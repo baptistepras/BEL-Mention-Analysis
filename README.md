@@ -159,6 +159,24 @@ Then run the evaluation script with the argument `--advanced`.
 
 Add the argument `--plot` to plot the metrics in `metrics/plots/`
 
+Add the arguments `--focus <characteristic_name>` and `--others <characteristic_name1> <optional_characteristic_name2> ...` to plot a specific continuous characteristic versus one or several discrete characteristics. Add the argument `--model` with these ones to chose a specific model to consider `(arboel, genbioel or rbes)`, will consider all of them if not specified. The set of valid characteristic names is:
+
+`mention_length`
+
+`num_synonyms`
+
+`num_homonyms`
+
+`lexical_variation`
+
+`mention_frequency`
+
+`entity_frequency`
+
+`zero_shot_entity`
+
+`zero_shot_surface_form`
+
 <br>
 
 Analyze your dataset characteristics by running from `belb-exp`:

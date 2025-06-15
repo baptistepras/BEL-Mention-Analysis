@@ -69,8 +69,8 @@ CORPUS_TO_RBES = {
 RBES_JOINT = ["gnormplus", "taggerone", "tmvar", "sr4gn"]
 
 BINNING_CONFIG = {
-    "mention_length": "auto",
-    "num_synonyms": "auto",
+    "mention_length": 15,
+    "num_synonyms": 40,
     "num_homonyms": "auto",
     "lexical_variation": 20,
     "mention_frequency": 100,
@@ -113,6 +113,24 @@ def parse_args():
         "--plot",
         action="store_true",
         help="If set, plot continuous characteristics"
+    )
+    parser.add_argument(
+        "--focus",
+        nargs="*",
+        default=None,
+        help="Characteristics on which we should focus (continuous)",
+    )
+    parser.add_argument(
+        "--others",
+        nargs="*",
+        default=None,
+        help="Characteristics to use for comparison (discrete)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Model to chose for focus vs others"
     )
     return parser.parse_args()
 
@@ -360,6 +378,9 @@ def get_results_by_characteristic(
     data: dict = {}
 
     for model, corpora_pred in preds.items():
+        if model == "biosyn" and (Corpora.MEDMENTIONS.name, Entities.UMLS) in CORPORA:
+                continue  # skip BioSyn when medMentions is activa
+        
         # We want to accumulate all mentions across all corpora (global evaluation)
         char_to_mentions = {}
 
@@ -466,13 +487,17 @@ def plot_performance_by_continuous_characteristic_simple(
     characteristic_name: str,
     mode: str = "std",
     k: int = 1,
-    save_csv: bool = True
+    save_csv: bool = True,
+    show: bool = True,
+    chosen_model: str = None
 ):
     # Init dict : valeur -> (score_total, nb_fois)
     dict_of_characteristic = {}
 
     # Loop over models
     for model, corpora_pred in preds.items():
+        if chosen_model is not None and chosen_model != model:
+            continue
         # Loop over corpora
         for corpus, corpus_gold in gold.items():
             corpus_pred = corpora_pred.get(corpus, {})
@@ -599,93 +624,94 @@ def plot_performance_by_continuous_characteristic_simple(
     else:
         print(f"[INFO] No binning applied for {characteristic_name}")
 
-    # Plot
-    fig = go.Figure()
+    if show:
+        # Plot
+        fig = go.Figure()
 
-    # Performance vs characteristic
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=y,
-        mode='lines+markers',
-        name='Mean Recall (k=1)',
-        line=dict(color='blue', width=2),
-        yaxis='y1'
-    ))
+        # Performance vs characteristic
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y,
+            mode='lines+markers',
+            name='Mean Recall (k=1)',
+            line=dict(color='blue', width=2),
+            yaxis='y1'
+        ))
 
-    # Trend line 
-    degree = 2
-    coeffs = np.polyfit(x, y, degree)
-    poly_eq = np.poly1d(coeffs)
-    y_poly_pred = poly_eq(x)
+        # Trend line 
+        degree = 2
+        coeffs = np.polyfit(x, y, degree)
+        poly_eq = np.poly1d(coeffs)
+        y_poly_pred = poly_eq(x)
 
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=y_poly_pred,
-        mode='lines',
-        name='Trend (poly deg 2)',
-        line=dict(color='red', width=2, dash='dash'),
-        yaxis='y1'
-    ))
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y_poly_pred,
+            mode='lines',
+            name='Trend (poly deg 2)',
+            line=dict(color='red', width=2, dash='dash'),
+            yaxis='y1'
+        ))
 
-    # Number of examples per characteristic
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=counts,
-        mode='lines+markers',
-        name='Number of Mentions',
-        line=dict(color='grey', width=1),
-        opacity=0.5,
-        yaxis='y2'
-    ))
+        # Number of examples per characteristic
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=counts,
+            mode='lines+markers',
+            name='Number of Mentions',
+            line=dict(color='grey', width=1),
+            opacity=0.5,
+            yaxis='y2'
+        ))
 
-    # Layout with secondary y-axis
-    fig.update_layout(
-        title=f"Performance vs {characteristic_name}",
-        xaxis_title=characteristic_name,
-        yaxis=dict(
-            title="Mean Recall (k=1)",
-            side='left',
-            showgrid=False
-        ),
-        yaxis2=dict(
-            title='Number of Mentions',
-            overlaying='y',
-            side='right',
-            showgrid=False
-        ),
-        legend=dict(
-            orientation="v",
-            x=1.02,
-            y=1,
-            bordercolor="Black",
-            borderwidth=0.5
-        ),
-        template='plotly_white'
-    )
+        # Layout with secondary y-axis
+        fig.update_layout(
+            title=f"Performance vs {characteristic_name}",
+            xaxis_title=characteristic_name,
+            yaxis=dict(
+                title="Mean Recall (k=1)",
+                side='left',
+                showgrid=False
+            ),
+            yaxis2=dict(
+                title='Number of Mentions',
+                overlaying='y',
+                side='right',
+                showgrid=False
+            ),
+            legend=dict(
+                orientation="v",
+                x=1.02,
+                y=1,
+                bordercolor="Black",
+                borderwidth=0.5
+            ),
+            template='plotly_white'
+        )
 
-    # Save
-    save_dir = os.path.join(os.getcwd(), "metrics", "plots")
-    os.makedirs(save_dir, exist_ok=True)
-    plot_path = os.path.join(save_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.png")
+        # Save
+        save_dir = os.path.join(os.getcwd(), "metrics", "plots")
+        os.makedirs(save_dir, exist_ok=True)
+        plot_path = os.path.join(save_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.png")
 
-    pio.write_image(fig, plot_path, format='png', scale=2)
-    print(f"[DONE] Plot Saved: {plot_path}")
+        pio.write_image(fig, plot_path, format='png', scale=2)
+        print(f"[DONE] Plot Saved: {plot_path}")
 
-    # Optionally save CSV
-    if save_csv:
-        csv_dir = os.path.join(os.getcwd(), "metrics", "plots/tables")
-        os.makedirs(csv_dir, exist_ok=True) 
+        # Optionally save CSV
+        if save_csv:
+            csv_dir = os.path.join(os.getcwd(), "metrics", "plots/tables")
+            os.makedirs(csv_dir, exist_ok=True) 
 
-        csv_path = os.path.join(csv_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.csv")    
+            csv_path = os.path.join(csv_dir, f"{characteristic_name}_k{k}_mode{mode}_full0.csv")    
 
-        with open(csv_path, "w") as f:
-            f.write("value,mean_perf\n")
-            for val_i in range(len(x)):
-                val = x[val_i]
-                mean_perf = y[val_i]
-                f.write(f"{val},{mean_perf:.4f}\n") 
+            with open(csv_path, "w") as f:
+                f.write("value,mean_perf\n")
+                for val_i in range(len(x)):
+                    val = x[val_i]
+                    mean_perf = y[val_i]
+                    f.write(f"{val},{mean_perf:.4f}\n") 
 
-        print(f"[DONE] CSV Saved: {csv_path}")
+            print(f"[DONE] CSV Saved: {csv_path}")
 
     return save_x, save_y
 
@@ -849,6 +875,120 @@ def plot_focus_vs_others(x, y, focus_char, continuous_char_to_discrete_char, pre
     print(f"[DONE] Focus plot saved -> {save_path}")
 
 
+def plot_focus_vs_chosen_others(x, y, focus_char, continuous_char_to_discrete_char, preds, save_path):
+    """
+    Plot recall for a given continuous characteristic, and show average value of discrete characteristics at each bin.
+    """
+    # Deduce the discrete version of the focus char to skip
+    discrete_focus_char = continuous_char_to_discrete_char[focus_char]
+
+    # Discrete characteristics to display (except the one mapped from focus_char)
+    discrete_chars = {c: {} for c in list(continuous_char_to_discrete_char.values()) if c != discrete_focus_char}
+
+    # Binning
+    n_bins = BINNING_CONFIG[focus_char]
+    if n_bins == "auto":
+        n_bins = len(x)
+    bins = np.linspace(x.min(), x.max(), n_bins + 1)
+    bin_indices = np.digitize(x, bins)
+
+    x_binned = []
+    y_binned = []
+    bin_to_mentions = {}
+    bin_idx_to_center_x = {}
+
+    for i in range(1, n_bins + 1):
+        mask = (bin_indices == i)
+        if mask.sum() == 0:
+            continue
+
+        x_center = x[mask].mean()
+        y_center = y[mask].mean()
+
+        x_binned.append(x_center)
+        y_binned.append(y_center)
+
+        bin_idx_to_center_x[i] = x_center
+
+        mentions = []
+        for p in preds:
+            if focus_char in p:
+                try:
+                    val = float(p[focus_char])
+                    if bins[i - 1] <= val < bins[i] or (i == n_bins and val == bins[-1]):
+                        mentions.append(p)
+                except:
+                    continue
+        bin_to_mentions[i] = mentions
+
+    x = np.array(x_binned)
+    y = np.array(y_binned)
+
+    # Mean value of each discrete char for each bin
+    for char in discrete_chars:
+        for i, mentions in bin_to_mentions.items():
+            vals = [float(p[char]) for p in mentions if char in p and isinstance(p[char], (int, float))]
+            mean_val = np.mean(vals) if vals else np.nan
+            x_val = bin_idx_to_center_x[i]
+            discrete_chars[char][x_val] = mean_val
+
+
+    # Plot
+    fig = go.Figure()
+
+    # Focus characteristic
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode='lines+markers',
+        name='Mean Recall (k=1)',
+        line=dict(color='blue', width=2),
+        yaxis='y1'
+    ))
+
+    # Discrete characteristics
+    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'red']
+    for i, (char, values_dict) in enumerate(discrete_chars.items()):
+        x_vals = list(values_dict.keys())
+        y_vals = list(values_dict.values())
+
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode='lines+markers',
+            name=char,
+            line=dict(color=colors[i % len(colors)], width=1),
+            opacity=0.4,
+            yaxis='y2'
+        ))
+
+    fig.update_layout(
+        title=f"Performance vs {focus_char} (with discrete characteristics)",
+        xaxis=dict(title=focus_char),
+        yaxis=dict(title='Recall (k=1)', side='left'),
+        yaxis2=dict(
+            title='Mean Discrete Char Value',
+            side='right',
+            overlaying='y',
+            range=[0, 1]
+        ),
+        template="plotly_white",
+        legend=dict(
+            orientation="h",
+            x=0,
+            y=-0.3,
+            xanchor="left",
+            yanchor="top",
+            bordercolor="Black",
+            borderwidth=0.5
+        )
+    )
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    fig.write_image(save_path)
+    print(f"[DONE] Focus plot saved -> {save_path}")
+
+
 def plot_characteristics_correlation_matrix():
     """
     Compute and plot Spearman correlation matrix between continuous and discrete characteristics
@@ -893,6 +1033,10 @@ def plot_characteristics_correlation_matrix():
 
 def main():
     args = parse_args()
+    if (args.others is None) ^ (args.focus is None):
+        raise ValueError("You must specify both --focus and --others (or neither).")
+    if (args.model is not None) and (args.model not in ["rbes", "arboel", "genbioel"]):
+        raise ValueError("You must specify a valid model (rbes, arboel or genbioel).")
 
     results_dir = os.path.join(os.getcwd(), "results")
 
@@ -1119,6 +1263,58 @@ def main():
         # print(f"[INFO] Plotting correlation matrix.")
         # plot_characteristics_correlation_matrix()
         # print()
+
+    if args.focus is not None and args.others is not None:
+        continuous_char_to_discrete_char={
+                "mention_length": "mention_length_discrete",
+                "num_synonyms": "synonymy_difficulty",
+                "num_homonyms": "homonymy_difficulty",
+                "lexical_variation": "lexical_variation_discrete",
+                "mention_frequency": "mention_frequency_difficulty",
+                "entity_frequency": "entity_frequency_difficulty",
+                "zero_shot_entity": "zero_shot_entity",
+                "zero_shot_surface_form": "zero_shot_surface_form"
+            }
+        invalid_keys = []
+        for val in args.others:
+            if val not in continuous_char_to_discrete_char:
+                invalid_keys.append(f"focus: {args.focus}")
+        for val in args.others:
+            if val not in continuous_char_to_discrete_char:
+                invalid_keys.append(f"others: {val}")
+        
+        if invalid_keys:
+            raise ValueError(f"The following keys are not valid continuous characteristics: {', '.join(invalid_keys)}")
+        
+        print(f"[INFO] Plotting focus for {args.focus} vs {args.others}.")
+        for char_name in args.focus:
+            chosen_char = {c: continuous_char_to_discrete_char[c] for c in args.others + [char_name]}
+            all_preds = load_json("metrics/tmp/aggregated_annotations.json")
+
+            if args.model is not None:
+                all_preds = [p for p in all_preds if p.get("model") == args.model]
+
+            x, y = plot_performance_by_continuous_characteristic_simple(
+                gold=gold,
+                preds=preds,
+                characteristic_name=char_name,
+                mode=args.mode,
+                k=args.k,
+                show=False,
+                chosen_model=args.model
+            )
+
+            if args.model is None:
+                model_name = all
+            else:
+                model_name = args.model
+            plot_focus_vs_chosen_others(
+                x=x, y=y,
+                focus_char=char_name,
+                continuous_char_to_discrete_char=chosen_char,
+                preds=all_preds,
+                save_path=f"metrics/plots/focus_{char_name}_vs_others_{'_'.join(args.others)}_{model_name}.png"
+                )
             
     """
     print("SUBSETS")
