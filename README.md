@@ -11,6 +11,8 @@ https://academic.oup.com/bioinformatics/article/39/11/btad698/7425450?login=true
 The original repositories (belb and belb-exp) can be found there 
 without my configuration, and with instructions to do your own.
 
+This configuration includes scripts to analyze results and datasets on on a mention-level.
+
 ## Usage Instructions
 
 ### Downloading the KBs
