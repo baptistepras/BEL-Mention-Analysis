@@ -1,8 +1,8 @@
 # BELB-Working-Setup
 
 This is a working setup for the Biomedical Entity-Linking Benchmark (BELB), 
-including corpora such as medMentions, linnaeus, s800, ncbi_disease and nlm_chem. 
-This repository contains all necessary steps to install and run BELB correctly across multiple corpora.
+including corpora such as medMentions, linnaeus, s800, ncbi_disease, and nlm_chem. 
+This repository contains all the necessary steps to install and run BELB correctly across multiple corpora.
 
 BELB was introduced in this paper: 
 
@@ -95,7 +95,7 @@ To convert corpora, run from `belb-exp`:
 
 `PYTHONPATH=../belb:. python -m belb.corpora.<corpora_name> --dir ../belb --db ../belb/db.yaml --pubtator ../belb/pubtator/pubtator.db --sentences`
 
-Note that the argument `pubtator` is optional, not all corpora need it but
+Note that the argument `pubtator` is optional; not all corpora need it, but
 some do. Make sure to have the `pubtator.db` file in `belb/pubtator`.
 
 <br>
@@ -106,7 +106,7 @@ To convert a knowledge base, run from `belb-exp`:
  
 <br>
 
-The processed corpora and knowledges bases will be stored in:
+The processed corpora and knowledge bases will be stored in:
 
 `belb/processed/corpora/<corpora_name>` for corpora
 
@@ -118,7 +118,7 @@ or
 ### Running the benchmark
 
 Edit the CORPORA list in `belb-exp/scripts/evaluate.p` to specify 
-which corpora to include in evaluation.
+which corpora to include in the evaluation.
 
 Edit the 
 
@@ -132,7 +132,7 @@ Then from `belb-exp` run:
 
 The argument `k` can take any integer value.
 
-The argument `mode` can take the values `std`, `strict` or `lenient`.
+The argument `mode` can take the values `std`, `strict`, or `lenient`.
 
 You can also add the argument `--full`.
 
@@ -142,8 +142,8 @@ Compute advanced metrics on predictions by first running from `belb-exp`:
 
 `python3 metrics/annotate_preds.py --corpora <corpora_name>`
 
-Add the argument `--force` to force the recomputation of the metrics,
-otherwise the script will try to pick them up from saved files.
+Add the argument `--force` to force the recomputation of the metrics.
+Otherwise, the script will try to pick them up from saved files.
 
 You can change the threshold for most characteristics using the following args:
 
@@ -157,9 +157,9 @@ You can change the threshold for most characteristics using the following args:
 
 Then run the evaluation script with the argument `--advanced`.
 
-Add the argument `--plot` to plot the metrics in `metrics/plots/`
+Add the argument `--plot` to plot the metrics in `metrics/plots/`.
 
-Add the arguments `--focus <characteristic_name>` and `--others <characteristic_name1> <optional_characteristic_name2> ...` to plot a specific continuous characteristic versus one or several discrete characteristics. Add the argument `--model` with these ones to chose a specific model to consider `(arboel, genbioel or rbes)`, will consider all of them if not specified. The set of valid characteristic names is:
+Add the arguments `--focus <characteristic_name>` and `--others <characteristic_name1> <optional_characteristic_name2> ...` to plot a specific continuous characteristic versus one or several discrete characteristics. Add the argument `--model` with these to choose a specific model to consider `(arboel, genbioel, or rbes)`, will consider all of them if not specified. The set of valid characteristic names is:
 
 `mention_length`
 
@@ -183,8 +183,8 @@ Analyze your dataset characteristics by running from `belb-exp`:
 
 `python3 metrics/analyze_datasets.py --corpora <corpora_name>`
 
-Add the argument `--force` to force the recomputation of the metrics,
-otherwise the script will try to pick them up from saved files.
+Add the argument `--force` to force the recomputation of the metrics.
+Otherwise, the script will try to pick them up from saved files.
 
 You can change the threshold for most characteristics using the following args:
 
@@ -207,9 +207,9 @@ You can change the threshold for most characteristics using the following args:
 
 - linnaeus
 
-- NCBI_disease (Warning: low performances, might suggest a corrupted corpora/KB)
+- NCBI_disease (Warning: low performance, might suggest a corrupted corpora/KB)
 
-- NLM_chem (Warning: low performances, might suggest a corrupted corpora/KB)
+- NLM_chem (Warning: low performance, might suggest a corrupted corpora/KB)
 
 <br>
 
@@ -234,11 +234,11 @@ You can change the threshold for most characteristics using the following args:
 
 ### Pubtator
 
-Pubtator is a tool required by several corpora to be converted to the
-BELB format. It consists of a 32GB archive which is then processed
+Pubtator is a tool required by several corpora to convert to the
+BELB format. It consists of a 32GB archive, which is then processed
 into a 100GB SQLite database.
 
-It is advised not to keep it locally (on your laptop for instance) as it 
+It is advised not to keep it locally (on your laptop, for instance) as it
 is very heavy and unnecessary unless you want to reconvert some corpora.
 
 ⚠️ It is not required to run the benchmark evaluation.
@@ -247,8 +247,7 @@ is very heavy and unnecessary unless you want to reconvert some corpora.
 ### dbSNP
 
 dbSNP is a big knowledge base needed by a few corpora (with VARIANTS). 
-It consists in an archive that is over 100GB, and then needs to be 
+It consists of an archive that is over 100GB, and then needs to be 
 converted into a processed knowledge base that is probably over 700/800GB.
 
-⚠️ It is not required to run the benchmark evaluation. and advised not 
-to use it unless you really need it and know what you are doing.
+⚠️ It is not required to run the benchmark evaluation.
