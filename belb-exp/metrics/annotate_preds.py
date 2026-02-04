@@ -12,7 +12,9 @@ import argparse
 import json
 import re
 from joblib import Parallel, delayed  # type: ignore
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+from math import comb
+import scipy.stats as st
 import numpy as np
 import pandas as pd
 import Levenshtein
@@ -473,6 +475,242 @@ def build_metrics_dict(preds: List[Dict],
     return metrics_dict
 
 
+def build_correct_vector(preds: List[Dict[str, Any]],
+                         test_lookup: Dict[str, Tuple[str, str]],
+                         pred_key_candidates: List[str] = ["predicted", "pred", "prediction", "entity_id", "cui", "predicted_cui"],
+                         internal2orig: Optional[Dict[str, str]] = None
+                         ) -> Tuple[np.ndarray, List[str]]:
+    """
+    Returns:
+      correct: array shape (n,) of 0/1
+      ids: mention_ids aligned with correct
+    Tries multiple possible prediction keys (adapt to your JSON schema).
+    """
+    correct = []
+    ids = []
+
+    for p in preds:
+        mid = p.get("hexdigest")
+        if mid is None or mid not in test_lookup:
+            continue
+
+        gold_cui = test_lookup[mid][0]
+
+        pred_cui = extract_top1_pred_id(p, internal2orig)
+        if pred_cui is None:
+            continue
+
+        ids.append(mid)
+        correct.append(int(pred_cui == gold_cui))
+
+    return np.array(correct, dtype=np.int32), ids
+
+
+def unwrap_top1(x: Any) -> Any:
+    """
+    Unwrap nested containers to get a scalar top-1 value.
+    Handles patterns like [['6563']], ['6563'], [6563], etc.
+    """
+    while isinstance(x, (list, tuple)) and len(x) > 0:
+        x = x[0]
+    return x
+
+
+def extract_top1_pred_id(
+    p: Dict[str, Any],
+    internal2orig: Optional[Dict[str, str]] = None,
+) -> Any:
+    """
+    Extract the model's top-1 predicted entity id from a BELB prediction dict.
+
+    - Handles flat keys like 'y_pred', 'predicted_cui', etc.
+    - Unwraps nested list/tuple shapes like [['6563']] -> '6563'
+    - If internal2orig is provided (UMLS case), maps internal ids -> original CUIs.
+    - Handles some common nested patterns: candidates / predictions / candidate_ids / topk
+    """
+
+    def maybe_map(v: Any) -> Any:
+        v = unwrap_top1(v)
+        if v is None:
+            return None
+        if internal2orig is not None:
+            sv = str(v)
+            if sv in internal2orig:
+                return internal2orig[sv]
+        return v
+
+    # 1) Common flat keys (your case: arboel has 'y_pred')
+    for k in ["y_pred", "predicted_cui", "predicted", "prediction", "pred", "entity_id", "cui"]:
+        if k in p:
+            return maybe_map(p[k])
+
+    # 2) Common nested patterns
+    # 2.1) {"candidates":[{"cui":"C123",...}, ...]} or {"candidates":[["6563"], ...]}
+    if "candidates" in p and isinstance(p["candidates"], list) and len(p["candidates"]) > 0:
+        cand0 = unwrap_top1(p["candidates"])
+        if isinstance(cand0, dict):
+            for k in ["cui", "id", "identifier", "entity_id", "internal_id"]:
+                if k in cand0:
+                    return maybe_map(cand0[k])
+            return maybe_map(cand0)
+        return maybe_map(cand0)
+
+    # 2.2) Lists of predictions / ids
+    for k in ["predictions", "candidate_ids", "candidates_ids", "topk"]:
+        if k in p and isinstance(p[k], list) and len(p[k]) > 0:
+            first = unwrap_top1(p[k])
+            if isinstance(first, dict):
+                for kk in ["cui", "id", "identifier", "entity_id", "internal_id"]:
+                    if kk in first:
+                        return maybe_map(first[kk])
+                return maybe_map(first)
+            return maybe_map(first)
+
+    return None
+
+
+def load_internal_to_original(kb_path: Path) -> Dict[str, str]:
+    conn = sqlite3.connect(kb_path)
+    cur = conn.execute("SELECT internal_identifier, original_identifier FROM umls_identifier_mapping")
+    m = {str(internal): str(original) for internal, original in cur.fetchall()}
+    conn.close()
+    return m
+
+
+def correct_map(preds: List[Dict[str, Any]], test_lookup: Dict[str, Tuple[str, str]], internal2orig: Optional[Dict[str, str]] = None) -> Dict[str, int]:
+    """
+    Returns: dict mention_id -> 0/1 correctness
+    """
+    out = {}
+    for p in preds:
+        mid = p.get("hexdigest")
+        if mid is None or mid not in test_lookup:
+            continue
+        gold_cui = test_lookup[mid][0]
+        pred_cui = extract_top1_pred_id(p, internal2orig)
+        if pred_cui is None:
+            continue
+        out[mid] = int(pred_cui == gold_cui)
+    return out
+
+
+def align_maps(map_a: Dict[str, int], map_b: Dict[str, int]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+    common = sorted(set(map_a.keys()) & set(map_b.keys()))
+    a = np.array([map_a[m] for m in common], dtype=np.int32)
+    b = np.array([map_b[m] for m in common], dtype=np.int32)
+    return a, b, common
+
+
+def subset_ids(preds: List[Dict[str, Any]], key: str, value: int) -> set:
+    """
+    Return mention_ids in preds such that preds[i][key] == value.
+    """
+    s = set()
+    for p in preds:
+        mid = p.get("hexdigest")
+        if mid is None:
+            continue
+        if p.get(key) == value:
+            s.add(mid)
+    return s
+
+
+def run_significance_analysis(preds_a: List[Dict[str, Any]],
+                              preds_b: List[Dict[str, Any]],
+                              test_lookup: Dict[str, Tuple[str, str]],
+                              label_a: str,
+                              label_b: str,
+                              characteristics: List[Tuple[str, int]],
+                              out_path: Path,
+                              internal2orig: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    characteristics: list of (key, value) to define subsets, e.g. ("zero_shot_entity", 1)
+    """
+    # maps correctness
+    map_a = correct_map(preds_a, test_lookup, internal2orig)
+    map_b = correct_map(preds_b, test_lookup, internal2orig)
+
+    a_all, b_all, common_all = align_maps(map_a, map_b)
+    results = {
+        "models": {"A": label_a, "B": label_b},
+        "global": mcnemar_test(a_all, b_all),
+        "by_subset": {}
+    }
+    results["global"]["n_common"] = len(common_all)
+    results["global"]["acc_A"] = float(a_all.mean()) if len(a_all) else None
+    results["global"]["acc_B"] = float(b_all.mean()) if len(b_all) else None
+
+    # subset tests
+    for key, val in characteristics:
+        ids_sub = subset_ids(preds_a, key, val) & subset_ids(preds_b, key, val)
+        ids_sub = sorted(ids_sub & set(common_all))
+        if len(ids_sub) == 0:
+            continue
+
+        a = np.array([map_a[i] for i in ids_sub if i in map_a and i in map_b], dtype=np.int32)
+        b = np.array([map_b[i] for i in ids_sub if i in map_a and i in map_b], dtype=np.int32)
+        if len(a) == 0:
+            continue
+
+        r = mcnemar_test(a, b)
+        r["n_common"] = int(len(a))
+        r["acc_A"] = float(a.mean())
+        r["acc_B"] = float(b.mean())
+        results["by_subset"][f"{key}=={val}"] = r
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    return results
+
+
+def mcnemar_test(correct_a: np.ndarray, correct_b: np.ndarray) -> Dict[str, Any]:
+    """
+    correct_a, correct_b: aligned 0/1 arrays for the same mentions.
+    Returns n00,n01,n10,n11 and p-values.
+
+    Uses:
+      - exact two-sided binomial test on discordant pairs (recommended, stable)
+      - chi-square with continuity correction (approx)
+    """
+    assert correct_a.shape == correct_b.shape
+
+    a = correct_a
+    b = correct_b
+
+    n11 = int(np.sum((a == 1) & (b == 1)))
+    n00 = int(np.sum((a == 0) & (b == 0)))
+    n10 = int(np.sum((a == 1) & (b == 0)))  # A correct, B wrong
+    n01 = int(np.sum((a == 0) & (b == 1)))  # A wrong, B correct
+
+    n = n01 + n10  # discordant pairs
+
+    # Exact two-sided McNemar p-value via Binomial test:
+    # Under H0, n01 ~ Binomial(n, 0.5). Two-sided uses min(n01,n10).
+    p_exact = None
+    if n > 0:
+        k = min(n01, n10)
+        # scipy.stats.binomtest exists in modern scipy; fallback to binom_test for older.
+        try:
+            p_exact = float(st.binomtest(k, n, 0.5, alternative="two-sided").pvalue)
+        except AttributeError:
+            p_exact = float(st.binom_test(k, n, 0.5))  # type: ignore
+
+    # Chi-square with continuity correction (Edwards)
+    p_chi2 = None
+    if n > 0:
+        chi2 = (abs(n01 - n10) - 1) ** 2 / n
+        p_chi2 = float(st.chi2.sf(chi2, df=1))
+
+    return {
+        "n00": n00, "n01": n01, "n10": n10, "n11": n11,
+        "p_exact": p_exact,
+        "p_chi2_cc": p_chi2,
+        "n_discordant": int(n),
+    }
+
+
 # Main
 def main():
     global args
@@ -480,7 +718,7 @@ def main():
     parser.add_argument("--corpora", type=str, required=True, help="Corpora to annotate")
     parser.add_argument("--force", action="store_true", help="Force rebuild of the saved results")
     parser.add_argument("--synonymy", type=int, default=10, help="Define the threshold to determine low synonymy")
-    parser.add_argument("--lenght", type=int, default=10, help="Define the threshold to determine long mentions")
+    parser.add_argument("--length", type=int, default=10, help="Define the threshold to determine long mentions")
     parser.add_argument("--frequency", type=int, default=10, help="Define the threshold to determine low frequency (entities and mentions)")
     parser.add_argument("--variation", type=float, default=0.1, help="Define the threshold to determine lexical variation")
     args = parser.parse_args()
@@ -544,6 +782,14 @@ def main():
 
     # Build synonymy lookup
     kb_path = ROOT_DIR.parent / "belb" / "processed" / "kbs" / kb_name / "kb.db"
+    internal2orig = None
+    # UMLS only (medmentions)
+    if kb_name == "umls":
+        internal2orig = load_internal_to_original(kb_path)
+    if internal2orig is None:
+        print("[INFO] No internal2orig mapping (non-UMLS KB).")
+    else:
+        print(f"[INFO] Loaded internal2orig mapping: {len(internal2orig)} rows")
     synonymy_lookup = build_synonymy_lookup(kb_path, kb_table_name, metrics_cache_dir, test_lookup)
 
     # Build homonymy lookup
@@ -597,6 +843,69 @@ def main():
 
     print()
     print(f"[DONE] All models processed for corpora {args.corpora}")
+
+    # PHASE 3 -> significance testing
+    print()
+    print("[INFO] Running significance testing (McNemar)...")
+
+    # IMPORTANT: use annotated predictions (with injected metrics) if you want per-bin analysis
+    # So load annotated files instead of filtered_predictions.json:
+    def load_annotated(corpus_name: str, model_name: str):
+        base_dir = ROOT_DIR / "results" / corpus_name / model_name
+        path = base_dir / "annotated_filtered_predictions.json"
+        if not path.exists():
+            raise FileNotFoundError(f"[ERROR] Missing annotated file for {model_name}: {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    preds_arboel_ann = load_annotated(args.corpora, "arboel")
+    preds_genbioel_ann = load_annotated(args.corpora, "genbioel")
+    preds_rbes_ann = load_annotated(args.corpora, rb_model)
+
+    characteristics = [
+        ("zero_shot_entity", 1),
+        ("zero_shot_surface_form", 1),
+        ("mention_length_discrete", 1),
+        ("lexical_variation_discrete", 1),
+        ("synonymy_difficulty", 1),
+        ("homonymy_difficulty", 1),
+        ("mention_frequency_difficulty", 1),
+        ("entity_frequency_difficulty", 1),
+    ]
+
+    print("[DEBUG] Example keys in arboel pred:", list(preds_arboel_ann[0].keys()))
+    print("[DEBUG] Example extract_top1_pred_id:", extract_top1_pred_id(preds_arboel_ann[0], internal2orig))
+    print("[DEBUG] Example gold:", test_lookup[preds_arboel_ann[0]["hexdigest"]][0])
+
+    sig_out = ROOT_DIR / "results" / args.corpora / "significance_genbioel_vs_rbes.json"
+    sig = run_significance_analysis(
+        preds_a=preds_genbioel_ann,
+        preds_b=preds_rbes_ann,
+        test_lookup=test_lookup,
+        label_a="genbioel",
+        label_b="rbes",
+        characteristics=characteristics,
+        out_path=sig_out,
+        internal2orig=internal2orig
+    )
+
+    print(f"[DONE] Significance results saved to: {sig_out}")
+    print(f"[INFO] Global: p_exact={sig['global']['p_exact']:.3g}, "
+          f"n_discordant={sig['global']['n_discordant']}, "
+          f"acc_A={sig['global']['acc_A']:.4f}, acc_B={sig['global']['acc_B']:.4f}")
+
+    # Quick automatic summary: list subsets
+    significant = []
+    for name, r in sig["by_subset"].items():
+        significant.append((name, r["p_exact"], r["acc_A"], r["acc_B"], r["n_discordant"], r["n_common"]))
+    significant.sort(key=lambda x: x[1])
+
+    if significant:
+        print("[INFO] Significant subsets (p_exact < 0.05):")
+        for name, p, accA, accB, nd, nc in significant[:20]:
+            print(f"  - {name}: p={p:.3g}, acc_A={accA:.4f}, acc_B={accB:.4f}, discordant={nd}, n={nc}")
+    else:
+        print("[INFO] No subset reached p_exact < 0.05 (exact McNemar).")
 
 
 # Entry
