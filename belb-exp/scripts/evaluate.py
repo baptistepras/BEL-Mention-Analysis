@@ -833,7 +833,7 @@ def plot_focus_vs_others(x, y, focus_char, continuous_char_to_discrete_char, pre
     ))
 
     # Discrete characteristics
-    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'red']
+    colors = ['blue', 'darkgreen', 'darkred', 'purple', 'brown', 'black']
     for i, (char, values_dict) in enumerate(discrete_chars.items()):
         x_vals = list(values_dict.keys())
         y_vals = list(values_dict.values())
@@ -947,7 +947,7 @@ def plot_focus_vs_chosen_others(x, y, focus_char, continuous_char_to_discrete_ch
     ))
 
     # Discrete characteristics
-    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'red']
+    colors = ['blue', 'darkgreen', 'darkred', 'purple', 'brown', 'black']
     for i, (char, values_dict) in enumerate(discrete_chars.items()):
         x_vals = list(values_dict.keys())
         y_vals = list(values_dict.values())
