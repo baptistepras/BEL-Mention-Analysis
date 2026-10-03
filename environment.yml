@@ -1,0 +1,30 @@
+# Environment for BEL-Mention-Analysis, for Linux and macOS (Intel and Apple Silicon).
+# conda-forge provides everything except nmslib (needed by scispacy) on Apple
+# Silicon, so the Anaconda main channel is listed second to provide it there.
+# The other versions are the ones used for the paper.
+# Create it from the root of the repository, since belb/ is installed from here.
+name: belb-env
+channels:
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+dependencies:
+  - python=3.9
+  - pip
+  - numpy=1.26.4
+  - nmslib=2.1.1
+  - pip:
+      - pandas==1.4.1
+      - scipy==1.13.1
+      - scikit-learn==1.2.2
+      - spacy==3.4.4
+      - scispacy==0.5.2
+      - https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.1/en_core_sci_sm-0.5.1.tar.gz
+      - transformers==4.31.0
+      - tokenizers==0.13.3
+      - rapidfuzz==2.15.1
+      - unidecode==1.3.6
+      - plotly==6.1.2
+      - kaleido==0.2.1   # image export of the plots
+      - joblib
+      - tqdm
+      - -e ./belb        # the modified BELB library of this repository

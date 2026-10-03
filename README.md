@@ -1,239 +1,114 @@
-# BELB-Working-Setup
+# BEL-Mention-Analysis
 
-This is a working setup for the Biomedical Entity-Linking Benchmark (BELB), including corpora such as medMentions, linnaeus, s800, ncbi_disease, and nlm_chem. This repository contains all the necessary steps to install and run BELB correctly across multiple corpora.
+A mention-level analysis of biomedical entity linking models, built on the Biomedical Entity Linking Benchmark (BELB). Global accuracy hides where models fail. This repository measures performance across interpretable characteristics of each mention (length, lexical variation, synonymy, homonymy, training frequency, zero-shot entities and surface forms) and compares neural and rule-based systems on several corpora.
 
-## Reference & Citation
+It is the code of our MIE 2026 paper, also included in this repository (`Fine-Grained_Mention-Level_Analysis_of_Biomedical_Entity_Linking_Models.pdf`).
 
-If you use this repository or code in your research, please cite our MIE paper:
+## Citation
 
-* **MIE Paper:** [https://ebooks.iospress.nl/volumearticle/78623](https://ebooks.iospress.nl/volumearticle/78623)
+If you use this code, please cite:
 
-For the underlying benchmark framework, you can also refer to the original BELB paper:
-* **BELB Paper:** [https://academic.oup.com/bioinformatics/article/39/11/btad698/7425450](https://academic.oup.com/bioinformatics/article/39/11/btad698/7425450)
+> B. Pras and N. Naderi. Fine-Grained Mention-Level Analysis of Biomedical Entity Linking Models. *Medical Informatics Europe (MIE)*, 2026. https://ebooks.iospress.nl/volumearticle/78623
 
-## Acknowledgement
+The benchmark itself comes from:
 
-This work has been supported by CHIST-ERA grant **CHIST-ERA22-ORD-02** and by the Agence Nationale de la Recherche under project numbers **ANR23-CHRO-0008-01** and **ANR-22-CPJ1-0087-01**.
+> S. Garda, L. Weber-Genzel, R. Martin, and U. Leser. BELB: a Biomedical Entity Linking Benchmark. *Bioinformatics*, 2023. https://academic.oup.com/bioinformatics/article/39/11/btad698/7425450
 
----
+## Repository content
 
-The original repositories (`belb` and `belb-exp`) can be found there without my configuration, and with instructions to do your own.
+| Path | Content |
+| --- | --- |
+| `belb/` | The BELB library, modified to run on this setup |
+| `belb-exp/` | The BELB experiments, extended with our mention-level analysis (`belb-exp/metrics/`) |
+| `environment.yml` | Conda environment for Linux and macOS |
 
-This configuration includes scripts to analyze results and datasets on a mention-level.
+`belb/` and `belb-exp/` are modified copies of [sg-wbi/belb](https://github.com/sg-wbi/belb) and [sg-wbi/belb-exp](https://github.com/sg-wbi/belb-exp) by Garda et al. The upstream repositories do not state a license, so their authors keep all rights on that code. This repository adds no license either.
 
-## Usage Instructions
+## Setup
 
-### Downloading the KBs
+### Knowledge bases
 
-You will first need to download the processed KBs here:
+Download the processed knowledge bases (675 MB archive, 2 GB once unzipped) and unzip them in `belb/processed/`, which creates `belb/processed/kbs/`:
 
 https://drive.google.com/file/d/1qDdQIhkGduWKGi-VrVn5aFOmQd3xDipd/view?usp=sharing
 
-It's a 675MB archive that you will then need to unzip (2GB).
-
-Unzip it in the following directory: `belb/processed/`
-
-It should create a folder named `kbs`.
-
 ### Environment
 
-#### Conda / Mini-conda
+One conda environment works on Linux and macOS. Create it from the root of the repository:
 
-From the root, use the corresponding `.yml` file:
+```bash
+conda env create -f environment.yml    # or: mamba env create -f environment.yml
+conda activate belb-env
+```
 
-`conda env create -f belb-env-linux.yml`
+It installs Python 3.9, the pinned versions used for the paper, the scispacy model, and the local `belb/` library in editable mode.
 
-or
+On Apple Silicon, `nmslib` comes from the Anaconda main channel. If conda asks you to accept its terms of service, run `conda tos accept --channel https://repo.anaconda.com/pkgs/main`, or use mamba.
 
-`conda env create -f belb-env-macOS.yml` 
+## Usage
 
-and then
+All commands run from `belb-exp/`.
 
-`pip install -e belb/.`
+### Benchmark
 
-`conda activate belb-env`
+Choose the corpora in the `CORPORA` list of `scripts/evaluate.py`, then run:
 
-<br>
+```bash
+PYTHONPATH=../belb:. python scripts/evaluate.py --belb_dir ../belb --k 1 --mode std
+```
 
-Alternatively, you can install it manually (recommended) by running:
+`--k` takes any integer, `--mode` takes `std`, `strict` or `lenient`, and `--full` is optional.
 
-`conda create -n belb-env python=3.9 -y`
+### Mention-level metrics
 
-`conda activate belb-env`
+Annotate the predictions with the mention characteristics:
 
-`pip install -r belb-exp/requirements.txt`
+```bash
+python3 metrics/annotate_preds.py --corpora <corpus_name>
+```
 
-`pip install -e belb/.`
+Then run the benchmark again with `--advanced`. Useful options:
 
-`pip install --force-reinstall pandas==1.4.1`
+| Option | Effect |
+| --- | --- |
+| `--force` | Recompute the metrics instead of reading the saved ones |
+| `--synonymy <int>` | Maximum number of synonyms of a poorly annotated entity (default 10) |
+| `--length <int>` | Minimum number of tokens of a long mention (default 10) |
+| `--variation <float>` | Minimum lexical variation considered high (default 0.1) |
+| `--frequency <int>` | Maximum frequency of a rare entity or mention (default 10) |
+| `--plot` | Save the plots in `metrics/plots/` |
+| `--focus <name> --others <names>` | Plot one continuous characteristic against one or more discrete ones |
+| `--model <name>` | Restrict the plots to `arboel`, `genbioel` or `rbes` |
 
-`pip install --force-reinstall numpy==1.26.4`
+Valid characteristic names: `mention_length`, `num_synonyms`, `num_homonyms`, `lexical_variation`, `mention_frequency`, `entity_frequency`, `zero_shot_entity`, `zero_shot_surface_form`.
 
-#### Venv
+### Dataset characteristics
 
-From the root, install it manually by running:
+```bash
+python3 metrics/analyze_datasets.py --corpora <corpus_name>
+```
 
-`python3 -m venv belb-venv`
+It accepts the same `--force`, `--synonymy`, `--length`, `--variation` and `--frequency` options.
 
-`source belb-venv/bin/activate`
+### Converting raw data
 
-`pip install -r belb-exp/requirements.txt`
+All corpora and knowledge bases used in the paper are already converted. To convert new ones, store the raw data in `belb/raw/corpora/<corpus_name>` or `belb/raw/kbs/<kb_name>`, then run:
 
-`pip install -e belb/.`
+```bash
+PYTHONPATH=../belb:. python -m belb.corpora.<corpus_name> --dir ../belb --db ../belb/db.yaml --pubtator ../belb/pubtator/pubtator.db --sentences
+PYTHONPATH=../belb:. python -m belb.kbs.<kb_name> --dir ../belb --data_dir ../belb/raw/kbs/<kb_name> --db ../belb/db.yaml
+```
 
-`pip install --force-reinstall pandas==1.4.1`
+`--pubtator` is only needed by some corpora. The results go to `belb/processed/corpora/` and `belb/processed/kbs/`.
 
-`pip install --force-reinstall numpy==1.26.4`
+## Corpora
 
-<br>
+These corpora run correctly: s800, MedMentions, Linnaeus, NCBI Disease and NLM-Chem. NCBI Disease and NLM-Chem give low scores, which may point to a corrupted corpus or knowledge base.
 
-## Converting raw data to processed
+These could not be processed: BC5CDR Disease and BC5CDR Chemical (corrupted zip files), BioID (corrupted tar file), GNormPlus and NLM-Gene (corrupted NCBI Gene knowledge base), and SNP, Osiris and tmVar (they need dbSNP).
 
-All corpora and knowledge bases are already converted in this setup, and raw data is not included in the repository, but if you ever need to download some, they must be stored in:
+PubTator (a 32 GB archive turned into a 100 GB SQLite database) and dbSNP (over 100 GB) are only needed to convert some corpora, not to run the benchmark.
 
-`belb/raw/corpora/<corpora_name>` for corpora
+## Acknowledgments
 
-or
-
-`belb/raw/kbs/<kb_name>` for knowledge bases
-
-<br>
-
-To convert corpora, run from `belb-exp`:
-
-`PYTHONPATH=../belb:. python -m belb.corpora.<corpora_name> --dir ../belb --db ../belb/db.yaml --pubtator ../belb/pubtator/pubtator.db --sentences`
-
-Note that the argument `pubtator` is optional; not all corpora need it, but some do. Make sure to have the `pubtator.db` file in `belb/pubtator`.
-
-<br>
-
-To convert a knowledge base, run from `belb-exp`:
-
-`PYTHONPATH=../belb:. python -m belb.kbs.<kb_name> --dir ../belb --data_dir ../belb/raw/kbs/<kb_name> --db ../belb/db.yaml`
- 
-<br>
-
-The processed corpora and knowledge bases will be stored in:
-
-`belb/processed/corpora/<corpora_name>` for corpora
-
-or
-
-`belb/processed/kbs/<kb_name>` for knowledge bases
-
-
-### Running the benchmark
-
-Edit the CORPORA list in `belb-exp/scripts/evaluate.p` to specify which corpora to include in the evaluation.
-
-<br>
-
-Then from `belb-exp` run:
-
-`PYTHONPATH=../belb:. python scripts/evaluate.py --belb_dir ../belb --k 1 --mode std`
-
-<br>
-
-The argument `k` can take any integer value.
-
-The argument `mode` can take the values `std`, `strict`, or `lenient`.
-
-You can also add the argument `--full`.
-
-<br>
-
-Compute advanced metrics on predictions by first running from `belb-exp`:
-
-`python3 metrics/annotate_preds.py --corpora <corpora_name>`
-
-Add the argument `--force` to force the recomputation of the metrics. Otherwise, the script will try to pick them up from saved files.
-
-You can change the threshold for most characteristics using the following args:
-
-`--synonymy <int>`: number of synonyms to be considered a poorly annotated entity (default <= 10)
-
-`--length <int>`: number of tokens to be considered a long mention (default > 10)
-
-`--variation <int>`: variation to be considered a high lexical variation (default > 0.1)
-
-`--frequency <int>`: frequency to be considered a rare entity or mention (default <= 10)
-
-Then run the evaluation script with the argument `--advanced`.
-
-Add the argument `--plot` to plot the metrics in `metrics/plots/`.
-
-Add the arguments `--focus <characteristic_name>` and `--others <characteristic_name1> <optional_characteristic_name2> ...` to plot a specific continuous characteristic versus one or several discrete characteristics. Add the argument `--model` with these to choose a specific model to consider `(arboel, genbioel, or rbes)`, will consider all of them if not specified. The set of valid characteristic names is:
-
-`mention_length`
-
-`num_synonyms`
-
-`num_homonyms`
-
-`lexical_variation`
-
-`mention_frequency`
-
-`entity_frequency`
-
-`zero_shot_entity`
-
-`zero_shot_surface_form`
-
-<br>
-
-Analyze your dataset characteristics by running from `belb-exp`:
-
-`python3 metrics/analyze_datasets.py --corpora <corpora_name>`
-
-Add the argument `--force` to force the recomputation of the metrics. Otherwise, the script will try to pick them up from saved files.
-
-You can change the threshold for most characteristics using the following args:
-
-`--synonymy <int>`: number of synonyms to be considered a poorly annotated entity (default <= 10)
-
-`--length <int>`: number of tokens to be considered a long mention (default > 10)
-
-`--variation <int>`: variation to be considered a high lexical variation (default > 0.1)
-
-`--frequency <int>`: frequency to be considered a rare entity or mention (default <= 10)
-
-
-### Working corpora
-
-✅ These corpora have been tested and verified to run correctly:
-
-- s800
-- medMentions
-- linnaeus
-- NCBI_disease (Warning: low performance, might suggest a corrupted corpora/KB)
-- NLM_chem (Warning: low performance, might suggest a corrupted corpora/KB)
-
-<br>
-
-⚠️ The following corpora could not be processed due to data corruption or missing dependencies:
-
-- bc5cdr_disease (corrupted zip file)
-- bc5cdr_chemical (corrupted zip file)
-- bioID (corrupted tar file)
-- gnormplus (corrupted NCBI_gene KB)
-- NLM_gene (corrupted NCBI_gene KB)
-- SNP (requires dbSNP knowledge base)
-- osiris (requires dbSNP knowledge base)
-- tmVar (requires dbSNP knowledge base)
-
-
-### Pubtator
-
-Pubtator is a tool required by several corpora to convert to the BELB format. It consists of a 32GB archive, which is then processed into a 100GB SQLite database.
-
-It is advised not to keep it locally (on your laptop, for instance) as it is very heavy and unnecessary unless you want to reconvert some corpora.
-
-⚠️ It is not required to run the benchmark evaluation.
-
-
-### dbSNP
-
-dbSNP is a big knowledge base needed by a few corpora (with VARIANTS). It consists of an archive that is over 100GB, and then needs to be converted into a processed knowledge base that is probably over 700/800GB.
-
-⚠️ It is not required to run the benchmark evaluation.
+This work was supported by the CHIST-ERA grant CHIST-ERA22-ORD-02 and by the Agence Nationale de la Recherche under projects ANR23-CHRO-0008-01 and ANR-22-CPJ1-0087-01.
